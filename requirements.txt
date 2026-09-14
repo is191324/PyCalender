@@ -1,0 +1,11 @@
+# Laufzeitabhängigkeiten
+kivy==2.3.0
+requests>=2.32.0          # HTTPS für CalDAV/ICS
+cryptography>=42.0.0      # AES-GCM für Zugangsdaten (bevorzugt)
+pycryptodome>=3.20.0      # gleichwertiger Ersatz, falls cryptography nicht baut
+defusedxml>=0.7.1         # XXE-sicheres Parsen der CalDAV-Antworten
+certifi>=2024.7.4         # aktuelle Wurzelzertifikate
+plyer>=2.1.0              # Dateiauswahl / Benachrichtigungen auf Android
+
+# Nur für Entwicklung und Tests
+pytest>=8.0 ; python_version >= "3.9"
