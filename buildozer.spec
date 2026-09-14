@@ -1,238 +1,58 @@
-# APK bauen lassen, ohne Android-SDK auf dem eigenen Rechner.
-#
-# So gehst du vor:
-#   1. Projekt zu GitHub hochladen (git init / add / commit / push)
-#   2. Reiter "Actions" öffnen -> "APK bauen" -> "Run workflow"
-#   3. Nach dem Lauf liegt die Datei unter "Artifacts" zum Herunterladen
-#
-# Der erste Lauf dauert 30-50 Minuten (SDK, NDK und alle Recipes werden
-# übersetzt). Danach greift der Cache und es sind meist 8-15 Minuten.
+[app]
+title = PyCalendar
+package.name = pycalendar
+package.domain = de.example.pycalendar
+source.dir = .
+source.include_exts = py,png,jpg,jpeg,webp,kv,atlas,ttf,json,md
+source.exclude_dirs = tests,docs,build,bin,.git,__pycache__
+version = 1.0.0
 
-name: APK bauen
+# Kivy + Netz + Krypto. pyjnius wird für Android-APIs benoetigt.
+requirements = python3,kivy==2.3.0,requests,urllib3,certifi,chardet,idna,openssl,cryptography,cffi,pycparser,defusedxml,plyer,android,pyjnius
+# Falls sich `cryptography` in der Build-Umgebung nicht übersetzen lässt
+# (es braucht eine Rust-Toolchain für Android), stattdessen diese Zeile
+# verwenden - die App erkennt den Unterbau selbst und das Format der
+# gespeicherten Zugangsdaten bleibt identisch:
+# requirements = python3,kivy==2.3.0,requests,urllib3,certifi,chardet,idna,openssl,pycryptodome,defusedxml,plyer,android,pyjnius
 
-on:
-  workflow_dispatch:
-    inputs:
-      variante:
-        description: "debug (sofort installierbar) oder release (muss signiert werden)"
-        type: choice
-        default: debug
-        options: [debug, release]
-      architekturen:
-        description: "Zielarchitekturen"
-        type: choice
-        default: arm64-v8a
-        options: [arm64-v8a, "arm64-v8a,armeabi-v7a"]
-  push:
-    tags: ["v*"]
+orientation = portrait
+fullscreen = 0
+icon.filename = assets/icon.png
+presplash.filename = assets/presplash.png
 
-permissions:
-  contents: read
+# Nur die wirklich noetigen Rechte:
+#   INTERNET          - CalDAV/ICS-Synchronisierung
+#   READ_MEDIA_IMAGES - Hintergrundbild wählen (Android 13+)
+#   POST_NOTIFICATIONS- Terminerinnerungen (Android 13+)
+# Bewusst NICHT angefordert: READ/WRITE_EXTERNAL_STORAGE, READ_CALENDAR,
+# WRITE_CALENDAR, ACCESS_FINE_LOCATION, READ_CONTACTS.
+android.permissions = INTERNET,POST_NOTIFICATIONS,READ_MEDIA_IMAGES
 
-concurrency:
-  group: apk-${{ github.ref }}
-  cancel-in-progress: true
+android.api = 34
+android.minapi = 24
+android.ndk_api = 24
+android.archs = arm64-v8a,armeabi-v7a
+android.allow_backup = False
 
-jobs:
-  # ---------------------------------------------------------------- Tests
-  tests:
-    name: Tests (inkl. Sicherheitstests)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
+# Android-SDK-Lizenz automatisch bestätigen. Ohne diese Zeile überspringt der
+# SDK-Manager in einem automatischen Lauf die Build-Tools ("Skipping following
+# packages as the license is not accepted") und Buildozer bricht anschließend
+# mit "Aidl not found, please install it." ab.
+android.accept_sdk_license = True
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
+# Build-Tools nicht automatisch hochrüsten. Buildozer würde sonst immer die
+# neueste Version nehmen - und die enthält kein "aidl" mehr, was den Build mit
+# "Aidl not found, please install it." abbrechen lässt. Der GitHub-Ablauf
+# installiert stattdessen gezielt eine Version, die aidl mitbringt.
+android.skip_update = True
 
-      - name: Testabhängigkeiten
-        # Kivy wird hier nicht gebraucht: die gesamte Logik ist von der
-        # Oberfläche getrennt und damit ohne Display testbar.
-        run: pip install pytest cryptography requests defusedxml pycryptodome
+# Kein Klartext-HTTP: Android schaltet unverschlüsselten Verkehr für Apps mit
+# targetSdk >= 28 bereits von sich aus ab (usesCleartextTraffic=false ist der
+# Vorgabewert), und die App erzwingt HTTPS zusätzlich im Code - siehe
+# pycal/sync/http.py. Eine eigene Manifest-Zeile ist daher nicht nötig.
 
-      - name: Testsuite
-        run: python -m pytest tests -q
+p4a.branch = master
 
-      - name: Sicherheitstests einzeln ausweisen
-        run: python -m pytest tests/test_pentest.py tests/test_security.py -q
-
-  # ------------------------------------------------------------------ APK
-  apk:
-    name: APK (${{ inputs.variante || 'debug' }})
-    needs: tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Java 17 (für die aktuellen Android-Build-Tools)
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Systempakete
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            git zip unzip autoconf automake libtool libtool-bin pkg-config \
-            cmake ccache libffi-dev libssl-dev zlib1g-dev libncurses-dev \
-            libltdl-dev patch gettext
-
-      - name: Rust-Toolchain (wird von der cryptography-Recipe gebraucht)
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          "$HOME/.cargo/bin/rustup" target add aarch64-linux-android armv7-linux-androideabi
-
-      - name: Buildozer
-        run: pip install --upgrade pip "buildozer==1.5.0" "cython==0.29.36" virtualenv
-
-      - name: Cache für SDK, NDK und Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.buildozer
-            ~/.gradle
-            .buildozer
-          key: buildozer-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: buildozer-v2-${{ runner.os }}-
-
-      - name: buildozer.spec für den automatischen Lauf einstellen
-        run: |
-          set -eu
-          ARCHS="${{ inputs.architekturen || 'arm64-v8a' }}"
-          sed -i "s|^android.archs = .*|android.archs = $ARCHS|" buildozer.spec
-          # Buildozer darf die Build-Tools NICHT selbst hochrüsten: es nimmt sonst
-          # immer die neueste Version, und die liefert kein "aidl" mehr mit.
-          grep -q "^android.skip_update" buildozer.spec \
-            || sed -i "/^android.api *=/a android.skip_update = True" buildozer.spec
-          grep -q "^android.accept_sdk_license" buildozer.spec \
-            || sed -i "/^android.api *=/a android.accept_sdk_license = True" buildozer.spec
-          echo "--- wirksame Einstellungen ---"
-          grep -E "^android\\.(archs|api|minapi|skip_update|accept_sdk_license)" buildozer.spec
-
-      - name: Android-SDK einrichten (Build-Tools mit aidl)
-        run: |
-          set -eu
-          SDK="$HOME/.buildozer/android/platform/android-sdk"
-          SDKMANAGER="$SDK/tools/bin/sdkmanager"
-
-          # Buildozer bringt sein SDK selbst mit. Beim ersten Lauf ist es noch
-          # nicht da - dann einmal Buildozer anstoßen, damit es das Grundgerüst
-          # herunterlädt. Dass dieser Lauf bei der aidl-Prüfung abbricht, ist
-          # erwartet und wird bewusst ignoriert.
-          if [ ! -x "$SDKMANAGER" ]; then
-            echo "SDK noch nicht vorhanden - Grundgerüst wird angelegt."
-            buildozer android debug || true
-          fi
-          test -x "$SDKMANAGER" || { echo "FEHLER: sdkmanager nicht unter $SDKMANAGER"; ls -R "$SDK" | head -40; exit 1; }
-
-          mkdir -p "$SDK/licenses"
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$SDK/licenses/android-sdk-license"
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" > "$SDK/licenses/android-sdk-preview-license"
-          yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses > /dev/null 2>&1 || true
-
-          "$SDKMANAGER" --sdk_root="$SDK" "platform-tools" "platforms;android-34" > /dev/null
-
-          # Eine Build-Tools-Version besorgen, die aidl noch mitbringt.
-          AIDL=""
-          for V in 33.0.2 33.0.1 32.0.0 30.0.3; do
-            "$SDKMANAGER" --sdk_root="$SDK" "build-tools;$V" > /dev/null 2>&1 || continue
-            if [ -x "$SDK/build-tools/$V/aidl" ]; then
-              echo "aidl gefunden in build-tools $V"
-              AIDL="$V"
-              break
-            fi
-          done
-
-          # Buildozer nimmt immer die HÖCHSTE installierte Version - alles ohne
-          # aidl muss deshalb weg, sonst schlägt die Prüfung wieder fehl.
-          for D in "$SDK"/build-tools/*; do
-            [ -d "$D" ] || continue
-            if [ ! -x "$D/aidl" ]; then
-              echo "entferne Build-Tools ohne aidl: $(basename "$D")"
-              rm -rf "$D"
-            fi
-          done
-
-          echo "--- verbleibende Build-Tools ---"
-          ls -1 "$SDK/build-tools" || true
-          if [ -z "$AIDL" ]; then
-            echo "FEHLER: keine Build-Tools-Version mit aidl gefunden."
-            exit 1
-          fi
-
-      - name: Signaturschlüssel bereitstellen (nur release)
-        if: ${{ inputs.variante == 'release' }}
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "Kein Keystore hinterlegt - der Release wird unsigniert gebaut."
-            exit 0
-          fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/release.keystore"
-          echo "P4A_RELEASE_KEYSTORE=$HOME/release.keystore" >> "$GITHUB_ENV"
-
-      - name: Bauen
-        # Das vollständige Protokoll geht in eine Datei (und als Artefakt mit),
-        # in die Konsole kommt nur das Wesentliche. Sonst schneidet GitHub die
-        # Ansicht ab ("truncated due to its large size") und die eigentliche
-        # Fehlermeldung ist nicht mehr zu sehen.
-        env:
-          P4A_RELEASE_KEYSTORE_PASSWD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          P4A_RELEASE_KEYALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          P4A_RELEASE_KEYALIAS_PASSWD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          LOG=/tmp/pycalendar-build.log
-          set +e
-          buildozer -v android ${{ inputs.variante || 'debug' }} > "$LOG" 2>&1
-          STATUS=$?
-          set -e
-          echo "Buildozer beendet mit Status $STATUS, $(wc -l < "$LOG") Zeilen Protokoll."
-
-          if [ "$STATUS" -ne 0 ]; then
-            echo ""
-            echo "=============== Zeilen mit Fehlermeldungen ==============="
-            TREFFER=$(grep -nE "error:|ERROR:|Error:|Traceback|Exception|No such file|not found|Command failed|Aborting" "$LOG" | tail -n 40 || true)
-            if [ -n "$TREFFER" ]; then echo "$TREFFER"; else echo "(keine eindeutigen Fehlerzeilen gefunden)"; fi
-            echo ""
-            echo "=============== letzte 120 Zeilen ==============="
-            tail -n 120 "$LOG"
-            echo ""
-            echo "Das vollständige Protokoll liegt als Artefakt 'buildozer-protokoll' bereit."
-            exit "$STATUS"
-          fi
-
-          echo "=============== letzte 20 Zeilen ==============="
-          tail -n 20 "$LOG"
-
-      - name: Ergebnis auflisten
-        if: always()
-        run: ls -lh bin/ || echo "Kein bin/-Verzeichnis - siehe Protokoll oben."
-
-      - name: APK als Artefakt hochladen
-        uses: actions/upload-artifact@v4
-        with:
-          name: pycalendar-apk-${{ inputs.variante || 'debug' }}
-          path: bin/*.apk
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Build-Protokoll bei Fehlschlag sichern
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: buildozer-protokoll
-          path: |
-            /tmp/pycalendar-build.log
-            .buildozer/android/platform/build-*/build.log
-            .buildozer/**/*.log
-          if-no-files-found: ignore
-          retention-days: 7
+[buildozer]
+log_level = 2
+warn_on_root = 1
