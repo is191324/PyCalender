@@ -1,15 +1,148 @@
+# APK bauen lassen, ohne Android-SDK auf dem eigenen Rechner.
+#
+# So gehst du vor:
+#   1. Projekt zu GitHub hochladen (git init / add / commit / push)
+#   2. Reiter "Actions" öffnen -> "APK bauen" -> "Run workflow"
+#   3. Nach dem Lauf liegt die Datei unter "Artifacts" zum Herunterladen
+#
+# Der erste Lauf dauert 30-50 Minuten (SDK, NDK und alle Recipes werden
+# übersetzt). Danach greift der Cache und es sind meist 8-15 Minuten.
 
-# Buildozer / python-for-android
-.buildozer/
-bin/
-*.apk
-*.aab
-*.keystore
+name: APK bauen
 
-# lokale Daten der App
-*.db
-*.db-wal
-*.db-shm
-device.key
-export/
+on:
+  workflow_dispatch:
+    inputs:
+      variante:
+        description: "debug (sofort installierbar) oder release (muss signiert werden)"
+        type: choice
+        default: debug
+        options: [debug, release]
+      architekturen:
+        description: "Zielarchitekturen"
+        type: choice
+        default: arm64-v8a
+        options: [arm64-v8a, "arm64-v8a,armeabi-v7a"]
+  push:
+    tags: ["v*"]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------- Tests
+  tests:
+    name: Tests (inkl. Sicherheitstests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Testabhängigkeiten
+        # Kivy wird hier nicht gebraucht: die gesamte Logik ist von der
+        # Oberfläche getrennt und damit ohne Display testbar.
+        run: pip install pytest cryptography requests defusedxml pycryptodome
+
+      - name: Testsuite
+        run: python -m pytest tests -q
+
+      - name: Sicherheitstests einzeln ausweisen
+        run: python -m pytest tests/test_pentest.py tests/test_security.py -q
+
+  # ------------------------------------------------------------------ APK
+  apk:
+    name: APK (${{ inputs.variante || 'debug' }})
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Java 17 (für die aktuellen Android-Build-Tools)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Systempakete
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git zip unzip autoconf automake libtool libtool-bin pkg-config \
+            cmake ccache libffi-dev libssl-dev zlib1g-dev libncurses-dev \
+            libltdl-dev patch gettext
+
+      - name: Rust-Toolchain (wird von der cryptography-Recipe gebraucht)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" target add aarch64-linux-android armv7-linux-androideabi
+
+      - name: Buildozer
+        run: pip install --upgrade pip "buildozer==1.5.0" "cython==0.29.36" virtualenv
+
+      - name: Cache für SDK, NDK und Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            ~/.gradle
+            .buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-${{ runner.os }}-
+
+      - name: Architekturen setzen
+        run: |
+          ARCHS="${{ inputs.architekturen || 'arm64-v8a' }}"
+          sed -i "s/^android.archs = .*/android.archs = $ARCHS/" buildozer.spec
+          grep "^android.archs" buildozer.spec
+
+      - name: Signaturschlüssel bereitstellen (nur release)
+        if: ${{ inputs.variante == 'release' && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/release.keystore"
+          echo "P4A_RELEASE_KEYSTORE=$HOME/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Bauen
+        env:
+          P4A_RELEASE_KEYSTORE_PASSWD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          P4A_RELEASE_KEYALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          P4A_RELEASE_KEYALIAS_PASSWD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: buildozer -v android ${{ inputs.variante || 'debug' }}
+
+      - name: Ergebnis auflisten
+        if: always()
+        run: ls -lh bin/ || echo "Kein bin/-Verzeichnis - siehe Protokoll oben."
+
+      - name: APK als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: pycalendar-apk-${{ inputs.variante || 'debug' }}
+          path: bin/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build-Protokoll bei Fehlschlag sichern
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-protokoll
+          path: |
+            .buildozer/android/platform/build-*/build.log
+            .buildozer/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
