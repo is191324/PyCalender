@@ -33,8 +33,17 @@ android.minapi = 24
 android.ndk_api = 24
 android.archs = arm64-v8a,armeabi-v7a
 android.allow_backup = False
-# Kein Klartext-HTTP (erzwingt TLS auf Betriebssystemebene)
-android.manifest.application_arguments = android:usesCleartextTraffic="false"
+
+# Android-SDK-Lizenz automatisch bestätigen. Ohne diese Zeile überspringt der
+# SDK-Manager in einem automatischen Lauf die Build-Tools ("Skipping following
+# packages as the license is not accepted") und Buildozer bricht anschließend
+# mit "Aidl not found, please install it." ab.
+android.accept_sdk_license = True
+
+# Kein Klartext-HTTP: Android schaltet unverschlüsselten Verkehr für Apps mit
+# targetSdk >= 28 bereits von sich aus ab (usesCleartextTraffic=false ist der
+# Vorgabewert), und die App erzwingt HTTPS zusätzlich im Code - siehe
+# pycal/sync/http.py. Eine eigene Manifest-Zeile ist daher nicht nötig.
 
 p4a.branch = master
 
