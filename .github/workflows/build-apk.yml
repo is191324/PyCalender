@@ -110,7 +110,7 @@ jobs:
           grep "^android.archs" buildozer.spec
 
       - name: Signaturschlüssel bereitstellen (nur release)
-        if: ${{ inputs.variante == 'release' && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: ${{ inputs.variante == 'release' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
