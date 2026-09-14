@@ -84,14 +84,18 @@ jobs:
             cmake ccache libffi-dev libssl-dev zlib1g-dev libncurses-dev \
             libltdl-dev patch gettext
 
-      - name: Rust-Toolchain (wird von der cryptography-Recipe gebraucht)
+      - name: Rust-Toolchain (Reserve, falls ein Rezept sie doch braucht)
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           "$HOME/.cargo/bin/rustup" target add aarch64-linux-android armv7-linux-androideabi
 
       - name: Buildozer
-        run: pip install --upgrade pip "buildozer==1.5.0" "cython==0.29.36" virtualenv
+        # Cython 3.0.x ist Pflicht: python-for-android baut inzwischen ein sehr
+        # neues CPython, und Cython 0.29 erzeugt dafür C-Code, der auf längst
+        # entfernte innere Funktionen zugreift ("_PyUnicode_FastCopyCharacters"
+        # undeclared). Die Obergrenze 3.0.12 gibt das Kivy-Rezept vor.
+        run: pip install --upgrade pip "buildozer==1.5.0" "cython==3.0.11" virtualenv
 
       - name: Cache für SDK, NDK und Gradle
         uses: actions/cache@v4
