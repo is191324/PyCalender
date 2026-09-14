@@ -181,11 +181,37 @@ jobs:
           echo "P4A_RELEASE_KEYSTORE=$HOME/release.keystore" >> "$GITHUB_ENV"
 
       - name: Bauen
+        # Das vollständige Protokoll geht in eine Datei (und als Artefakt mit),
+        # in die Konsole kommt nur das Wesentliche. Sonst schneidet GitHub die
+        # Ansicht ab ("truncated due to its large size") und die eigentliche
+        # Fehlermeldung ist nicht mehr zu sehen.
         env:
           P4A_RELEASE_KEYSTORE_PASSWD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           P4A_RELEASE_KEYALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           P4A_RELEASE_KEYALIAS_PASSWD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: buildozer -v android ${{ inputs.variante || 'debug' }}
+        run: |
+          LOG=/tmp/pycalendar-build.log
+          set +e
+          buildozer -v android ${{ inputs.variante || 'debug' }} > "$LOG" 2>&1
+          STATUS=$?
+          set -e
+          echo "Buildozer beendet mit Status $STATUS, $(wc -l < "$LOG") Zeilen Protokoll."
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo ""
+            echo "=============== Zeilen mit Fehlermeldungen ==============="
+            TREFFER=$(grep -nE "error:|ERROR:|Error:|Traceback|Exception|No such file|not found|Command failed|Aborting" "$LOG" | tail -n 40 || true)
+            if [ -n "$TREFFER" ]; then echo "$TREFFER"; else echo "(keine eindeutigen Fehlerzeilen gefunden)"; fi
+            echo ""
+            echo "=============== letzte 120 Zeilen ==============="
+            tail -n 120 "$LOG"
+            echo ""
+            echo "Das vollständige Protokoll liegt als Artefakt 'buildozer-protokoll' bereit."
+            exit "$STATUS"
+          fi
+
+          echo "=============== letzte 20 Zeilen ==============="
+          tail -n 20 "$LOG"
 
       - name: Ergebnis auflisten
         if: always()
@@ -205,6 +231,7 @@ jobs:
         with:
           name: buildozer-protokoll
           path: |
+            /tmp/pycalendar-build.log
             .buildozer/android/platform/build-*/build.log
             .buildozer/**/*.log
           if-no-files-found: ignore
