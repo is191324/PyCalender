@@ -100,31 +100,74 @@ jobs:
             ~/.buildozer
             ~/.gradle
             .buildozer
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: buildozer-${{ runner.os }}-
+          key: buildozer-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-v2-${{ runner.os }}-
 
-      - name: Android-SDK-Lizenzen vorab bestätigen
-        # Doppelte Absicherung zu android.accept_sdk_license in der
-        # buildozer.spec: Die Lizenzdateien werden angelegt, bevor der
-        # SDK-Manager läuft. Ohne bestätigte Lizenz überspringt er die
-        # Build-Tools, und der Build scheitert später an "Aidl not found".
+      - name: buildozer.spec für den automatischen Lauf einstellen
         run: |
+          set -eu
+          ARCHS="${{ inputs.architekturen || 'arm64-v8a' }}"
+          sed -i "s|^android.archs = .*|android.archs = $ARCHS|" buildozer.spec
+          # Buildozer darf die Build-Tools NICHT selbst hochrüsten: es nimmt sonst
+          # immer die neueste Version, und die liefert kein "aidl" mehr mit.
+          grep -q "^android.skip_update" buildozer.spec \
+            || sed -i "/^android.api *=/a android.skip_update = True" buildozer.spec
+          grep -q "^android.accept_sdk_license" buildozer.spec \
+            || sed -i "/^android.api *=/a android.accept_sdk_license = True" buildozer.spec
+          echo "--- wirksame Einstellungen ---"
+          grep -E "^android\\.(archs|api|minapi|skip_update|accept_sdk_license)" buildozer.spec
+
+      - name: Android-SDK einrichten (Build-Tools mit aidl)
+        run: |
+          set -eu
           SDK="$HOME/.buildozer/android/platform/android-sdk"
+          SDKMANAGER="$SDK/tools/bin/sdkmanager"
+
+          # Buildozer bringt sein SDK selbst mit. Beim ersten Lauf ist es noch
+          # nicht da - dann einmal Buildozer anstoßen, damit es das Grundgerüst
+          # herunterlädt. Dass dieser Lauf bei der aidl-Prüfung abbricht, ist
+          # erwartet und wird bewusst ignoriert.
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "SDK noch nicht vorhanden - Grundgerüst wird angelegt."
+            buildozer android debug || true
+          fi
+          test -x "$SDKMANAGER" || { echo "FEHLER: sdkmanager nicht unter $SDKMANAGER"; ls -R "$SDK" | head -40; exit 1; }
+
           mkdir -p "$SDK/licenses"
           echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$SDK/licenses/android-sdk-license"
           echo "84831b9409646a918e30573bab4c9c91346d8abd" > "$SDK/licenses/android-sdk-preview-license"
-          echo "d975f751698a77b662f1254ddbeed3901e976f5a" > "$SDK/licenses/intel-android-extra-license"
-          ls -l "$SDK/licenses"
+          yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses > /dev/null 2>&1 || true
 
-      - name: Architekturen setzen
-        run: |
-          ARCHS="${{ inputs.architekturen || 'arm64-v8a' }}"
-          sed -i "s/^android.archs = .*/android.archs = $ARCHS/" buildozer.spec
-          grep "^android.archs" buildozer.spec
+          "$SDKMANAGER" --sdk_root="$SDK" "platform-tools" "platforms;android-34" > /dev/null
 
-      # Hinweis: `secrets` darf in einer if-Bedingung NICHT vorkommen -
-      # GitHub lehnt die Datei sonst als "Invalid workflow file" ab.
-      # Die Prüfung, ob ein Schlüssel hinterlegt ist, passiert deshalb im Skript.
+          # Eine Build-Tools-Version besorgen, die aidl noch mitbringt.
+          AIDL=""
+          for V in 33.0.2 33.0.1 32.0.0 30.0.3; do
+            "$SDKMANAGER" --sdk_root="$SDK" "build-tools;$V" > /dev/null 2>&1 || continue
+            if [ -x "$SDK/build-tools/$V/aidl" ]; then
+              echo "aidl gefunden in build-tools $V"
+              AIDL="$V"
+              break
+            fi
+          done
+
+          # Buildozer nimmt immer die HÖCHSTE installierte Version - alles ohne
+          # aidl muss deshalb weg, sonst schlägt die Prüfung wieder fehl.
+          for D in "$SDK"/build-tools/*; do
+            [ -d "$D" ] || continue
+            if [ ! -x "$D/aidl" ]; then
+              echo "entferne Build-Tools ohne aidl: $(basename "$D")"
+              rm -rf "$D"
+            fi
+          done
+
+          echo "--- verbleibende Build-Tools ---"
+          ls -1 "$SDK/build-tools" || true
+          if [ -z "$AIDL" ]; then
+            echo "FEHLER: keine Build-Tools-Version mit aidl gefunden."
+            exit 1
+          fi
+
       - name: Signaturschlüssel bereitstellen (nur release)
         if: ${{ inputs.variante == 'release' }}
         env:
