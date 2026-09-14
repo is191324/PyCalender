@@ -103,17 +103,37 @@ jobs:
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: buildozer-${{ runner.os }}-
 
+      - name: Android-SDK-Lizenzen vorab bestätigen
+        # Doppelte Absicherung zu android.accept_sdk_license in der
+        # buildozer.spec: Die Lizenzdateien werden angelegt, bevor der
+        # SDK-Manager läuft. Ohne bestätigte Lizenz überspringt er die
+        # Build-Tools, und der Build scheitert später an "Aidl not found".
+        run: |
+          SDK="$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p "$SDK/licenses"
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$SDK/licenses/android-sdk-license"
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" > "$SDK/licenses/android-sdk-preview-license"
+          echo "d975f751698a77b662f1254ddbeed3901e976f5a" > "$SDK/licenses/intel-android-extra-license"
+          ls -l "$SDK/licenses"
+
       - name: Architekturen setzen
         run: |
           ARCHS="${{ inputs.architekturen || 'arm64-v8a' }}"
           sed -i "s/^android.archs = .*/android.archs = $ARCHS/" buildozer.spec
           grep "^android.archs" buildozer.spec
 
+      # Hinweis: `secrets` darf in einer if-Bedingung NICHT vorkommen -
+      # GitHub lehnt die Datei sonst als "Invalid workflow file" ab.
+      # Die Prüfung, ob ein Schlüssel hinterlegt ist, passiert deshalb im Skript.
       - name: Signaturschlüssel bereitstellen (nur release)
         if: ${{ inputs.variante == 'release' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "Kein Keystore hinterlegt - der Release wird unsigniert gebaut."
+            exit 0
+          fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/release.keystore"
           echo "P4A_RELEASE_KEYSTORE=$HOME/release.keystore" >> "$GITHUB_ENV"
 
