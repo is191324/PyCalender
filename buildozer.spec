@@ -8,12 +8,17 @@ source.exclude_dirs = tests,docs,build,bin,.git,__pycache__
 version = 1.0.0
 
 # Kivy + Netz + Krypto. pyjnius wird für Android-APIs benoetigt.
-requirements = python3,kivy==2.3.0,requests,urllib3,certifi,chardet,idna,openssl,cryptography,cffi,pycparser,defusedxml,plyer,android,pyjnius
-# Falls sich `cryptography` in der Build-Umgebung nicht übersetzen lässt
-# (es braucht eine Rust-Toolchain für Android), stattdessen diese Zeile
-# verwenden - die App erkennt den Unterbau selbst und das Format der
-# gespeicherten Zugangsdaten bleibt identisch:
-# requirements = python3,kivy==2.3.0,requests,urllib3,certifi,chardet,idna,openssl,pycryptodome,defusedxml,plyer,android,pyjnius
+requirements = python3,kivy,requests,urllib3,certifi,chardet,idna,openssl,pycryptodome,defusedxml,plyer,android,pyjnius
+# Hinweise zu dieser Zeile:
+# * kivy wird bewusst OHNE Versionsangabe genannt. python-for-android bringt ein
+#   eigenes, auf die jeweils gebaute Python-Fassung abgestimmtes Kivy-Rezept mit;
+#   eine feste Angabe wie kivy==2.3.0 setzt dieses Rezept ausser Kraft und führt zu
+#   Übersetzungsfehlern wie "_PyUnicode_FastCopyCharacters" undeclared.
+# * pycryptodome statt cryptography: gleichwertige Verschlüsselung (AES-256-GCM,
+#   scrypt), aber ohne Rust-Werkzeugkette beim Bauen. Der Zugangsdaten-Tresor
+#   erkennt den Unterbau selbst, das Format bleibt identisch.
+#   Alternative mit cryptography (braucht Rust für Android):
+#   requirements = python3,kivy,requests,urllib3,certifi,chardet,idna,openssl,cryptography,cffi,pycparser,defusedxml,plyer,android,pyjnius
 
 orientation = portrait
 fullscreen = 0
