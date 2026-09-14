@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Buildozer / python-for-android
+.buildozer/
+bin/
+*.apk
+*.aab
+*.keystore
+
+# lokale Daten der App
+*.db
+*.db-wal
+*.db-shm
+device.key
+export/
