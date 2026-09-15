@@ -91,11 +91,12 @@ jobs:
           "$HOME/.cargo/bin/rustup" target add aarch64-linux-android armv7-linux-androideabi
 
       - name: Buildozer
-        # Cython 3.0.x ist Pflicht: python-for-android baut inzwischen ein sehr
-        # neues CPython, und Cython 0.29 erzeugt dafür C-Code, der auf längst
-        # entfernte innere Funktionen zugreift ("_PyUnicode_FastCopyCharacters"
-        # undeclared). Die Obergrenze 3.0.12 gibt das Kivy-Rezept vor.
-        run: pip install --upgrade pip "buildozer==1.5.0" "cython==3.0.11" virtualenv
+        # Cython muss zur gebauten Python-Fassung passen. Die in der
+        # buildozer.spec festgelegte Werkzeug-Marke v2024.01.21 baut CPython
+        # 3.11.5 - dafür ist Cython 0.29.x das Richtige. (Beim master-Zweig mit
+        # CPython 3.14 wäre es Cython 3.0.x; die Kombination muss zusammenpassen,
+        # sonst entsteht C-Code für Funktionen, die es nicht mehr gibt.)
+        run: pip install --upgrade pip "buildozer==1.5.0" "cython==0.29.36" virtualenv
 
       - name: Cache für SDK, NDK und Gradle
         uses: actions/cache@v4
