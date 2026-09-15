@@ -11,8 +11,8 @@ version = 1.0.0
 requirements = python3,kivy,requests,urllib3,certifi,chardet,idna,openssl,pycryptodome,defusedxml,plyer,android,pyjnius
 # Hinweise zu dieser Zeile:
 # * kivy wird bewusst OHNE Versionsangabe genannt. python-for-android bringt ein
-#   eigenes, auf die jeweils gebaute Python-Fassung abgestimmtes Kivy-Rezept mit;
-#   eine feste Angabe wie kivy==2.3.0 setzt dieses Rezept ausser Kraft und führt zu
+#   eigenes, auf die gebaute Python-Fassung abgestimmtes Kivy-Rezept mit (hier
+#   2.3.0); eine feste Angabe setzt dieses Rezept ausser Kraft und führt zu
 #   Übersetzungsfehlern wie "_PyUnicode_FastCopyCharacters" undeclared.
 # * pycryptodome statt cryptography: gleichwertige Verschlüsselung (AES-256-GCM,
 #   scrypt), aber ohne Rust-Werkzeugkette beim Bauen. Der Zugangsdaten-Tresor
@@ -56,7 +56,12 @@ android.skip_update = True
 # Vorgabewert), und die App erzwingt HTTPS zusätzlich im Code - siehe
 # pycal/sync/http.py. Eine eigene Manifest-Zeile ist daher nicht nötig.
 
-p4a.branch = master
+# Feste, stabile Fassung des Android-Werkzeugs statt des master-Zweigs.
+# master baut derzeit CPython 3.14 mit einer neuen Paketmechanik, an der binäre
+# Pakete scheitern ("not a supported wheel on this platform", "from versions:
+# none"). Diese Marke baut CPython 3.11.5 mit Kivy 2.3.0 - die seit Jahren
+# erprobte Kombination.
+p4a.branch = v2024.01.21
 
 [buildozer]
 log_level = 2
